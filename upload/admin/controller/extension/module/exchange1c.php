@@ -2411,17 +2411,28 @@ class ControllerExtensionModuleExchange1c extends Controller {
 			if ($filesize) {
 				chmod($uplod_file , 0664);
 
-				$xmlfiles = $this->extractZip($uplod_file, $error);
-				if ($error) {
-					$this->echo_message(0, "modeFile(): Error extract file: " . $uplod_file);
-
-					if ($this->config->get('exchange1c_not_delete_files_after_import') != 1) {
-						$this->log("Удален файл: " . $uplod_file);
-						unlink($uplod_file);
+				$path_info = pathinfo($uplod_file);
+				//$this->log($path_info, 2);
+				$filename = $path_info['filename'];
+				$extension = $path_info['extension'];
+		
+				if ($extension == 'zip') {
+					$zip_support = class_exists('ZipArchive') ? true : false;
+					
+					if (!$zip_support) {
+						$this->error['warning'] = "Ваш PHP не поддерживает ZIP архивы, отсутствует класс ZipArchive";
+						return false;
 					}
 
+					$this->error['warning'] = "Zip пока не поддерживается скриптом импорта.";
 					return false;
-				};
+				} elseif ($extension == 'xml') {
+					// Это не архив
+					$error = $this->modeImport();
+					if ($error) return $error;	
+				} else {
+					return "ERROR: 1007";
+				}
 			} else {
 				$this->echo_message(0, "modeFile(): Error create file");
 			}

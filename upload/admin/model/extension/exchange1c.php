@@ -22,6 +22,13 @@ class ModelExtensionExchange1c extends Model {
 	// Статистика
 	private $STAT			= array();
 
+	// карта 'ИдСклада -> идентификаторов складов "Мультистора"'
+	private $MULTISTORE_MAP = array();
+
+	// статус для товаров в наличии
+	private $AVAILABLE_PRODUCT_STOCK_STATUS_ID = 7;
+
+
 	/**
 	 * ****************************** ОБЩИЕ ФУНКЦИИ ******************************
 	 */
@@ -940,7 +947,7 @@ class ModelExtensionExchange1c extends Model {
 		$tags = array(
 			'{name}'		=> isset($data['name']) 			? $data['name']					: '',
 			'{sku}'			=> isset($data['sku'])				? $data['sku']					: '',
-			'{model}'		=> isset($data['model'])			? $data['model']				: '',
+			'{model}'		=> isset($data['model'])			? $data['model']				: $data['sku'],
 			'{brand}'		=> isset($data['manufacturer'])		? $data['manufacturer']['name'] : '',
 			'{cats}'		=> $this->getProductCategoriesString($product_id),
 			'{prod_id}'		=> isset($product_id)				? $product_id					: '',
@@ -1429,7 +1436,8 @@ class ModelExtensionExchange1c extends Model {
 		if (isset($data['description']))
 			$sql[] = $mode == 'set' 	? "`description` = '" .			$this->db->escape($data['description']) . "'"		: "`description`";
 		if (isset($data['meta_title']))
-			$sql[] = $mode == 'set' 	? "`meta_title` = '" .			$this->db->escape($data['meta_title']) . "'"		: "`meta_title`";
+			//$sql[] = $mode == 'set' 	? "`meta_title` = '" .			$this->db->escape($data['meta_title']) . "'"		: "`meta_title`";
+			$sql[] = $mode == 'set' 	? "`meta_title` = ''"		: "`meta_title`";
 		if (isset($data['meta_h1']))
 			$sql[] = $mode == 'set' 	? "`meta_h1` = '" .				$this->db->escape($data['meta_h1']) . "'"			: "`meta_h1`";
 		if (isset($data['meta_description']))
@@ -2855,6 +2863,9 @@ class ModelExtensionExchange1c extends Model {
 			if ($this->config->get('exchange1c_product_default_stock_status') && $data['quantity'] <= 0) {
 				$data['stock_status_id'] = $this->config->get('exchange1c_product_default_stock_status');
 				$this->log("Установлен статус при отсутствии на складе, stock_status_id:" . $data['stock_status_id'], 2);
+			} else if ($data['quantity'] > 0) {
+				$data['stock_status_id'] = $this->AVAILABLE_PRODUCT_STOCK_STATUS_ID;
+				$this->log("Установлен статус при наличии на складе, stock_status_id:" . $data['stock_status_id'], 2);
 			}
 
 			// Отключаем товар если остаток меньше или равен 0
@@ -3010,7 +3021,7 @@ class ModelExtensionExchange1c extends Model {
 			// Синхронизация по артикулу
 	 		if ($this->config->get('exchange1c_product_sync_mode') == 'sku') {
 	 			$this->log("Поиск товара по артикулу: " . $data['sku'], 2);
-				if (empty($data['sku'])) {
+				if (empty($data['sku']) or $data['sku'] == '') {
  					$this->log("ВНИМАНИЕ! Артикул пустой! Товар пропущен. Проверьте товар " . $data['name'], 2);
  					return false;
  				}
@@ -3124,10 +3135,11 @@ class ModelExtensionExchange1c extends Model {
 		//$update = $this->seoGenerateProduct($data);
 		//if ($this->ERROR) return false;
 
-//		if ($update || $new) {
-//			// Обновляем описание товара после генерации SEO
-//			$this->setProductDescription($data, $new);
-//		}
+		//if ($update || $new) {
+		// if ($update || $new) {
+		// 	// Обновляем описание товара после генерации SEO
+		// 	$this->setProductDescription($data, $new);
+		// }
 
  		return $product_id;
 
@@ -4848,6 +4860,11 @@ class ModelExtensionExchange1c extends Model {
 			// АРТИКУЛ
 			$data['sku'] = $product->Артикул ? htmlspecialchars(trim((string)$product->Артикул)) : "";
 
+			if ($data['sku'] == '') {
+				$this->log('Пустой артикул! Пропуск товара c GUID ' + $data['product_guid']);
+				return false;
+			}
+
 			// YANDEX MARKET
 			if (isset($this->TAB_FIELDS['product']['noindex'])) {
 				$data['noindex']		= 1; // В некоторых версиях
@@ -4885,6 +4902,11 @@ class ModelExtensionExchange1c extends Model {
 			// МОДЕЛЬ
 			if ($product->Модель) {
 				$data['model'] = htmlspecialchars(trim((string)$product->Модель));
+
+				if ($data['model'] == '') {
+					$this->log('Пустая строка в качестве модели! Устанвка значения артикула (sku) в качестве значения модели.', 2);
+					$data['model'] = $data['sku'];
+				}
 			}
 
 			// НАИМЕНОВАНИЕ
@@ -6020,6 +6042,80 @@ class ModelExtensionExchange1c extends Model {
 
 
 	/**
+	 * ver 1
+	 * update 2024-09-20
+	 * Получает идентификатор склада "Мультистора"
+	 *
+	 */
+	private function getMultistoreId($name) {
+		$this->log($this->MULTISTORE_MAP, 2);
+
+		if (isset($this->MULTISTORE_MAP[$name])) {
+			$this->log('Получение multistore_id из карты.');
+			return $this->MULTISTORE_MAP[$name];
+		}
+
+		$this->log('Получение multistore_id из БД.');
+		$query = $this->query("SELECT `multistore_id` FROM `" . DB_PREFIX . "multistore` WHERE `name` = '" . $this->db->escape($name) . "' LIMIT 1");
+		
+		if ($query->num_rows) {
+			$this->MULTISTORE_MAP[$name] = (int)$query->row['multistore_id'];
+			return $this->MULTISTORE_MAP[$name];
+		} else {
+			$this->MULTISTORE_MAP[$name] = false;
+		}
+
+		return false;
+	} // getMultistoreId()
+
+
+	/**
+	 * ver 1
+	 * update 2024-09-20
+	 * Обновляет кол-во на складе "Мультистора"
+	 */
+	private function updateProductToMultistoreQuantity($product_id, $multistore_id, $quantity) {
+
+		$this->log('Обновление кол-ва на складе "Мультистора".', 2);
+		$this->log('product_id = ' 	. $product_id, 2);
+		$this->log('multistore_id = ' 	. $multistore_id, 2);
+		$this->log('quantity = ' 		. $quantity, 2);
+
+		$this->query("UPDATE `" . DB_PREFIX . "product_to_multistore` SET `quantity` = " . (int)$quantity . " WHERE `product_id` = " . (int)$product_id . " AND `multistore_id` = " . (int)$multistore_id);
+
+		return $this->db->getLastId();
+	} // updateProductToMultistoreQuantity()
+
+
+	/**
+	 * ver 1
+	 * update 2024-09-20
+	 * Читает остатки по складам и обновляет кол-во на складах "Мультистора"
+	 */
+	private function updateMultistore($product_id, $xml) {
+
+		$this->log('Обновление кол-ва на складах "Мультистора"...', 2);
+
+		foreach ($xml->Склад as $warehouse) {
+			$warehouse_guid = strval($warehouse['ИдСклада']);
+			$this->log('ИдСклада: ' . $warehouse_guid, 2);
+
+			$multistore_id = $this->getMultistoreId($warehouse_guid);
+
+			if ($multistore_id === false) {
+				$this->log('Не найден склад "Мультистора" с алиасом ' . $warehouse_guid);
+				continue;
+			}
+
+			$this->log('multistore_id = ' . $multistore_id, 2);
+
+			$this->updateProductToMultistoreQuantity($product_id, $multistore_id, (int)$warehouse['КоличествоНаСкладе']);
+		} // foreach
+	}
+	// updateMultistore()
+
+
+	/**
 	 * ver 22
 	 * update 2018-08-08
 	 * Разбор предложений
@@ -6099,6 +6195,12 @@ class ModelExtensionExchange1c extends Model {
 			// ОСТАТКИ
 			if ($offer->Остатки || $offer->Количество || $offer->Склад) {
 				$data['quantity'] = $this->parseQuantity($offer, $data);
+				if ($this->ERROR) return false;
+			}
+			
+			// Склады для "Мультистора"
+			if ($offer->Склад) {
+				$this->updateMultistore($product_id, $offer);
 				if ($this->ERROR) return false;
 			}
 
